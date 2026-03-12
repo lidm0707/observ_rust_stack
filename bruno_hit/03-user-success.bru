@@ -1,0 +1,25 @@
+meta {
+  name: "Echo Request - Success Scenario"
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/echo
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "message": "Hello from Bruno!",
+    "extra": {
+      "user_id": "123",
+      "timestamp": "2024-01-01T00:00:00Z"
+    }
+  }
+}
+
+vars:pre-request {
+  baseUrl: 0.0.0.0:8080
+}

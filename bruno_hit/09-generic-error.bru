@@ -1,0 +1,15 @@
+meta {
+  name: "Generic Error Simulation"
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/trigger-error
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: 0.0.0.0:8080
+}

@@ -1,0 +1,54 @@
+services:
+  # ClickHouse for OpenObserve
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: openobserve_clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./config/clickhouse.xml:/etc/clickhouse-server/users.d/default-password.xml
+
+    environment:
+      CLICKHOUSE_DB: openobserve
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # OpenObserve - Logs and Metrics
+  openobserve:
+    image: openobserve/openobserve:latest-amd64
+    container_name: openobserve
+    ports:
+      - "5080:5080"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - openobserve_data:/data
+
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      # OpenObserve configuration
+      ZO_ROOT_USER_EMAIL: admin@example.com
+      ZO_ROOT_USER_PASSWORD: Complexpass#123
+      # Use ClickHouse as backend
+      ZO_DATA_STORE: clickhouse
+      # Allow unauthenticated OTLP ingestion (for development)
+      ZO_INGEST_ALLOWED_ROLES: _all
+
+    networks:
+      - openobserve_network
+
+volumes:
+  clickhouse_data:
+  openobserve_data:
+
+networks:
+  openobserve_network:
+    name: observability_openobserve_network
+    external: true

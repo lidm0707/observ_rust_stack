@@ -1,0 +1,15 @@
+meta {
+  name: "Validation Warning"
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/trigger-warning
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: 0.0.0.0:8080
+}

@@ -1,0 +1,15 @@
+meta {
+  name: "Metrics Endpoint - Demo"
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/metrics-demo
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: 0.0.0.0:8080
+}

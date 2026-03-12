@@ -1,0 +1,20 @@
+services:
+  actix-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+    env_file:
+      - .env
+
+    networks:
+      - openobserve_network
+
+    restart: unless-stopped
+
+networks:
+  openobserve_network:
+    name: observability_openobserve_network
+    external: true
