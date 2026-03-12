@@ -107,6 +107,9 @@ print_header "Stopping All Services"
 # Stop OpenObserve
 stop_service "openobserve" "docker-compose.yml" "Logs & Metrics Platform" || true
 
+# Stop Glitchtip
+stop_service "glitchtip" "docker-compose.yml" "Error Tracking Platform" || true
+
 # Stop Actix Web Application
 if [ -d "$SCRIPT_DIR/actix-app" ]; then
     stop_service "../actix-app" "docker-compose.yml" "Web Application" || true
@@ -141,9 +144,14 @@ remove_shared_network || true
 # Display summary
 print_header "Stop Summary"
 
-echo -e "${GREEN}All requested services have been stopped.${NC}"
+echo -e "${GREEN}All requested services have been stopped:${NC}"
+echo "  - OpenObserve (Logs & Metrics)"
+echo "  - Glitchtip (Error Tracking)"
+echo "  - Actix Web Application"
+echo ""
 echo ""
 echo -e "${YELLOW}Note:${NC} This operation removed volumes, so all data has been deleted."
+echo -e "${YELLOW}This includes OpenObserve data, Glitchtip PostgreSQL/Redis data, and application data.${NC}"
 echo -e "${YELLOW}If you want to keep data, run 'docker compose down' (without -v) instead.${NC}"
 echo ""
 

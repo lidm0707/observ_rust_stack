@@ -168,6 +168,12 @@ else
     print_error "Failed to start OpenObserve. Continuing with other services..."
 fi
 
+# Start Glitchtip (Sentry-compatible error tracking)
+if start_service "glitchtip" "docker-compose.yml" "Error Tracking Platform"; then
+    check_service_health "glitchtip" "docker-compose.yml" 90
+else
+    print_error "Failed to start Glitchtip. Continuing with other services..."
+fi
 
 # Start Actix Web Application
 if [ -d "$SCRIPT_DIR/actix-app" ]; then
@@ -195,7 +201,9 @@ echo -e "${CYAN}OpenObserve:${NC}"
 docker compose -f openobserve/docker-compose.yml ps
 echo ""
 
-
+echo -e "${CYAN}Glitchtip (Sentry-compatible):${NC}"
+docker compose -f glitchtip/docker-compose.yml ps
+echo ""
 
 echo -e "${CYAN}Actix Web Application:${NC}"
 cd "$SCRIPT_DIR/actix-app"
@@ -221,9 +229,19 @@ echo "  Username:  admin@example.com"
 echo "  Password:  Complexpass#123"
 echo ""
 
-
-
-
+echo -e "${GREEN}Glitchtip (Error Tracking):${NC}"
+echo "  Web UI:    http://localhost:8000"
+echo ""
+echo "  First Time Setup - Create Admin Account:"
+echo "  Run this command after services start:"
+echo "    docker exec -it glitchtip_web python manage.py createsuperuser"
+echo ""
+echo "  You will be prompted to enter:"
+echo "    - Email address (1 time)"
+echo "    - Password (2 times for confirmation)"
+echo ""
+echo "  Note:      After login, create organization and project to get DSN"
+echo ""
 
 echo -e "${GREEN}Actix Web Application:${NC}"
 echo "  App:       http://localhost:8080"
@@ -256,20 +274,22 @@ print_header "Management Commands"
 
 echo -e "${YELLOW}View Logs:${NC}"
 echo "  OpenObserve:  cd observability/openobserve && docker compose logs -f"
+echo "  Glitchtip:    cd observability/glitchtip && docker compose logs -f"
 echo ""
-
 
 echo -e "${YELLOW}Stop Services:${NC}"
 echo "  All:          ./stop.sh"
 echo "  OpenObserve:  cd observability/openobserve && docker compose down"
+echo "  Glitchtip:    cd observability/glitchtip && docker compose down"
 echo "  Actix App:    cd actix-app && docker compose down"
 echo ""
 
-
 echo -e "${YELLOW}Restart Services:${NC}"
 echo "  OpenObserve:  cd observability/openobserve && docker compose restart"
+echo "  Glitchtip:    cd observability/glitchtip && docker compose restart"
 echo "  Actix App:    cd actix-app && docker compose restart"
 echo ""
+
 
 
 # Display port mappings
@@ -280,7 +300,11 @@ echo "  - 5080: Web UI (HTTP)"
 echo "  - 5081: Web UI (HTTPS)"
 echo ""
 
-
+echo "Glitchtip:"
+echo "  - 8000: Web UI (HTTP)"
+echo "  - 5432: PostgreSQL (internal)"
+echo "  - 6379: Redis (internal)"
+echo ""
 
 echo "Actix Web Application:"
 echo "  - 8080: HTTP API"
@@ -295,16 +319,20 @@ print_header "Next Steps"
 echo "1. Verify all services are accessible"
 echo "2. Verify Actix app is running: curl http://localhost:8080/health"
 echo "3. Test API endpoints with Bruno collection in bruno_hit/ directory"
-echo "4. Monitor data in OpenObserve Web UI at http://localhost:5080"
+echo "4. Create Glitchtip admin account:"
+echo "   docker exec -it glitchtip_web python manage.py createsuperuser"
+echo "5. Monitor data in OpenObserve Web UI at http://localhost:5080"
+echo "6. Set up Glitchtip: Create organization and project to get Sentry DSN"
 echo ""
-
 
 echo -e "${YELLOW}Important Notes:${NC}"
 echo "- OpenObserve handles all telemetry: logs, traces, metrics, and errors"
+echo "- Glitchtip handles error tracking (Sentry-compatible)"
 echo "- Actix app uses HTTP OTLP (protobuf) protocol for telemetry export"
 echo "- Telemetry is sent to: {OPENOBSERVE_HTTP_ENDPOINT}/api/{OPENOBSERVE_ORG}/v1/{type}"
+echo "- Errors are sent to Glitchtip via Sentry SDK"
 echo "- Data is persisted in Docker volumes"
-echo "- Check .env file for configuration: OPENOBSERVE_HTTP_ENDPOINT, OPENOBSERVE_ORG, OPENOBSERVE_STREAM"
+echo "- Check .env file for configuration: OPENOBSERVE_HTTP_ENDPOINT, OPENOBSERVE_ORG, OPENOBSERVE_STREAM, SENTRY_DSN"
 echo ""
 
 

@@ -1,0 +1,103 @@
+version: "3.8"
+
+services:
+  # PostgreSQL database for Glitchtip
+  postgres:
+    image: postgres:16-alpine
+    container_name: glitchtip_postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: glitchtip
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: glitchtip_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glitchtip -d glitchtip"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openobserve_network
+
+  # Redis for Glitchtip caching and job queues
+  redis:
+    image: redis:7-alpine
+    container_name: glitchtip_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openobserve_network
+
+  # Glitchtip web application
+  web:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip_web
+    ports:
+      - "8000:8000"
+    volumes:
+      - glitchtip_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database configuration
+      DATABASE_URL: postgres://glitchtip:glitchtip_password@postgres:5432/glitchtip
+      DEFAULT_FROM_EMAIL: noreply@glitchtip.local
+      EMAIL_URL: smtp://
+      SECRET_KEY: super-secret-key-change-in-production
+      # Glitchtip configuration
+      GLITCHTIP_DOMAIN: http://localhost:8000
+      ENABLE_EMAIL_REPLIES: "False"
+      # Sentry compatibility settings
+      SENTRY_VERSION: "24.6.0"
+      # Performance settings
+      GUNICORN_WORKERS: "3"
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - openobserve_network
+
+  # Glitchtip worker for background jobs
+  worker:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://glitchtip:glitchtip_password@postgres:5432/glitchtip
+      DEFAULT_FROM_EMAIL: noreply@glitchtip.local
+      EMAIL_URL: smtp://
+      SECRET_KEY: super-secret-key-change-in-production
+      # Redis configuration for Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: python manage.py runworker
+    networks:
+      - openobserve_network
+
+volumes:
+  postgres_data:
+  glitchtip_data:
+
+networks:
+  openobserve_network:
+    name: observability_openobserve_network
+    external: true
