@@ -12,7 +12,7 @@ services:
     networks:
       - openobserve_network
 
-    restart: unless-stopped
+    restart: "no"
 
 networks:
   openobserve_network:

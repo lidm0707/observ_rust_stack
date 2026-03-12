@@ -16,7 +16,9 @@ use opentelemetry_sdk::{
     metrics::{PeriodicReader, SdkMeterProvider},
     trace::{Sampler, SdkTracerProvider},
 };
+use sentry::{ClientOptions, types::Dsn};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::time::Duration;
 use tracing::{error, info, instrument, warn};
 use tracing_opentelemetry::OpenTelemetryLayer;
@@ -33,14 +35,43 @@ struct OtelConfig {
     auth: String,
 }
 
+#[derive(Clone)]
+struct SentryConfig {
+    dsn: String,
+    environment: String,
+    release: String,
+    sample_rate: f32,
+}
+
+impl SentryConfig {
+    fn from_env() -> Self {
+        let dsn = std::env::var("SENTRY_DSN").expect("not found sentry dsn");
+        let environment =
+            std::env::var("SENTRY_ENVIRONMENT").expect("not found SENTRY_ENVIRONMENT");
+        let release = std::env::var("SENTRY_RELEASE").expect("not found SENTRY_RELEASE");
+        let sample_rate = std::env::var("SENTRY_SAMPLE_RATE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.0);
+
+        SentryConfig {
+            dsn,
+            environment,
+            release,
+            sample_rate,
+        }
+    }
+}
+
 impl OtelConfig {
     fn from_env() -> Self {
-        let http_endpoint = std::env::var("OPENOBSERVE_HTTP_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:5080".into());
-        let org_id = std::env::var("OPENOBSERVE_ORG").unwrap_or_else(|_| "default".into());
-        let stream = std::env::var("OPENOBSERVE_STREAM").unwrap_or_else(|_| "actix_demo".into());
-        let user = std::env::var("OPENOBSERVE_USER").unwrap_or_else(|_| "root@example.com".into());
-        let pass = std::env::var("OPENOBSERVE_PASS").unwrap_or_else(|_| "Complexpass#123".into());
+        let http_endpoint =
+            std::env::var("OPENOBSERVE_HTTP_ENDPOINT").expect("OPENOBSERVE_HTTP_ENDPOINT");
+
+        let org_id = std::env::var("OPENOBSERVE_ORG").expect("OPENOBSERVE_ORG");
+        let stream = std::env::var("OPENOBSERVE_STREAM").expect("OPENOBSERVE_STREAM");
+        let user = std::env::var("OPENOBSERVE_USER").expect("OPENOBSERVE_USER");
+        let pass = std::env::var("OPENOBSERVE_PASS").expect("OPENOBSERVE_PASS");
         let auth = format!(
             "Basic {}",
             BASE64_STANDARD.encode(format!("{}:{}", user, pass))
@@ -179,7 +210,7 @@ async fn echo(
 }
 
 #[get("/trigger-error")]
-#[instrument(name = "trigger_error")]
+#[instrument(name = "trigger_error", skip(metrics))]
 async fn trigger_error(metrics: web::Data<AppMetrics>) -> impl Responder {
     metrics.http_requests_total.add(
         1,
@@ -209,6 +240,10 @@ async fn trigger_error(metrics: web::Data<AppMetrics>) -> impl Responder {
                 endpoint = "/trigger-error",
                 "Application error occurred with full stack trace"
             );
+
+            // Capture error in Sentry/Glitchtip if initialized
+            let event_id = sentry::capture_message(&e.to_string(), sentry::Level::Error);
+            info!(event_id = %event_id, "Error captured in Sentry/Glitchtip");
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": e.to_string(),
                 "error_chain": e.chain().map(|c| c.to_string()).collect::<Vec<_>>(),
@@ -235,6 +270,43 @@ async fn trigger_warning(metrics: web::Data<AppMetrics>) -> impl Responder {
         "High value detected"
     );
     HttpResponse::Ok().json(serde_json::json!({ "message": "Warning logged" }))
+}
+
+#[get("/trigger-panic")]
+#[instrument(name = "trigger_panic", skip(metrics))]
+async fn trigger_panic(metrics: web::Data<AppMetrics>) -> impl Responder {
+    metrics.http_requests_total.add(
+        1,
+        &[
+            KeyValue::new("endpoint", "/trigger-panic"),
+            KeyValue::new("method", "GET"),
+        ],
+    );
+
+    let request_id = Uuid::new_v4().to_string();
+    let request_id_for_panic = request_id.clone();
+
+    error!(
+        endpoint = "/trigger-panic",
+        %request_id,
+        "About to trigger a panic - this should be captured by Glitchtip"
+    );
+
+    // Spawn a thread to trigger the panic so Actix-web's panic handler doesn't interfere
+    // Sentry's PanicIntegration will capture this panic
+    std::thread::spawn(move || {
+        panic!("Oh no, an error! Request ID: {}", request_id_for_panic);
+    });
+
+    // Give the panic thread time to execute and send to Sentry
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Return a response to the client
+    HttpResponse::InternalServerError().json(serde_json::json!({
+        "error": "Panic triggered in background thread - check Glitchtip!",
+        "request_id": request_id,
+        "note": "Panic occurred in separate thread, Sentry PanicIntegration should have captured it"
+    }))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -367,20 +439,64 @@ fn setup_tracing(cfg: &OtelConfig) -> anyhow::Result<(SdkTracerProvider, SdkLogg
     Ok((tracer_provider, log_provider))
 }
 
+fn init_sentry(cfg: &SentryConfig) -> Option<sentry::ClientInitGuard> {
+    // Simple Sentry initialization following GlitchTip documentation
+    // This is non-blocking and will not prevent app startup even if DSN is invalid
+
+    // Parse DSN first - if it fails, return None and continue app startup
+    let dsn = match Dsn::from_str(&cfg.dsn) {
+        Ok(dsn) => dsn,
+        Err(e) => {
+            warn!(
+                "Invalid Sentry DSN '{}': {}. Sentry error tracking disabled.",
+                cfg.dsn, e
+            );
+            return None;
+        }
+    };
+
+    let guard = sentry::init((
+        dsn,
+        ClientOptions {
+            release: Some(cfg.release.clone().into()),
+            environment: Some(cfg.environment.clone().into()),
+            sample_rate: cfg.sample_rate,
+            attach_stacktrace: true,
+            send_default_pii: false,
+            traces_sample_rate: 0.1,
+            ..Default::default()
+        }
+        .add_integration(sentry::integrations::panic::PanicIntegration::default()),
+    ));
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("service.name", "actix-openobserve");
+        scope.set_tag("service.version", env!("CARGO_PKG_VERSION"));
+        scope.set_tag("deployment.environment", &cfg.environment);
+    });
+
+    Some(guard)
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file if it exists
+    println!("BOOTING ACTIX APP");
     if let Err(e) = dotenvy::dotenv() {
         info!("No .env file found or failed to load: {}", e);
     }
 
     let cfg = OtelConfig::from_env();
+    let sentry_cfg = SentryConfig::from_env();
 
     let (tracer_provider, log_provider) = setup_tracing(&cfg)?;
     let metrics_provider = init_metrics(&cfg)?;
     let app_metrics = web::Data::new(AppMetrics::new());
+
+    // Initialize Sentry/Glitchtip (optional - app continues even if this fails)
+    let _sentry_guard = init_sentry(&sentry_cfg);
 
     info!(
         http_endpoint = %cfg.http_endpoint,
@@ -388,6 +504,20 @@ async fn main() -> anyhow::Result<()> {
         stream = %cfg.stream,
         "OpenObserve telemetry initialized — HTTP/protobuf"
     );
+
+    if _sentry_guard.is_some() {
+        info!(
+            sentry_dsn = %sentry_cfg.dsn,
+            environment = %sentry_cfg.environment,
+            release = %sentry_cfg.release,
+            "Sentry/Glitchtip error tracking initialized"
+        );
+    } else {
+        warn!(
+            sentry_dsn = %sentry_cfg.dsn,
+            "Sentry/Glitchtip error tracking NOT initialized - errors will only be logged to console"
+        );
+    }
     info!("Starting Actix-web server on http://0.0.0.0:8080");
 
     let metrics_clone = app_metrics.clone();
@@ -401,19 +531,10 @@ async fn main() -> anyhow::Result<()> {
             .service(echo)
             .service(trigger_error)
             .service(trigger_warning)
+            .service(trigger_panic)
     })
     .bind("0.0.0.0:8080")?
     .run();
-
-    // Handle graceful shutdown
-    let handle = server.handle();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C handler");
-        info!("Shutting down server...");
-        handle.stop(true).await;
-    });
 
     // Run the server
     server.await?;
@@ -436,6 +557,13 @@ async fn main() -> anyhow::Result<()> {
         error!("Failed to shutdown tracer provider: {}", e);
     }
 
+    // Flush Sentry events before shutdown to ensure all captured errors are sent to GlitchTip
+    if let Some(client) = sentry::Hub::current().client() {
+        client.close(Some(std::time::Duration::from_secs(2)));
+    }
+
+    // Sentry shutdown happens automatically when _sentry_guard goes out of scope
+    info!("Sentry/Glitchtip shutdown complete");
     info!("Telemetry shutdown complete");
 
     Ok(())

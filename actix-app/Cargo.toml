@@ -39,3 +39,6 @@ anyhow = "1"
 base64 = "0.22"
 dotenvy = "0.15.7"
 tracing-actix-web = "0.7.21"
+
+# Sentry/Glitchtip error tracking
+sentry = { version = "0.47.0", features = ["panic"] }
