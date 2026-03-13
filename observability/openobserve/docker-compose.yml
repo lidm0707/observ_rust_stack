@@ -3,9 +3,6 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:latest
     container_name: openobserve_clickhouse
-    ports:
-      - "8123:8123"
-      - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./config/clickhouse.xml:/etc/clickhouse-server/users.d/default-password.xml
@@ -24,8 +21,6 @@ services:
     container_name: openobserve
     ports:
       - "5080:5080"
-      - "4317:4317"
-      - "4318:4318"
     volumes:
       - openobserve_data:/data
 
